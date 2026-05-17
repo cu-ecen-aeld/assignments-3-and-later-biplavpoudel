@@ -1,0 +1,12 @@
+-nostdinc
+-I/usr/src/linux-headers-6.8.0-111-generic/include
+-I/usr/src/linux-headers-6.8.0-111-generic/arch/x86/include
+-I/usr/src/linux-headers-6.8.0-111-generic/arch/x86/include/generated
+-I/usr/src/linux-headers-6.8.0-111-generic/include/uapi
+-I/usr/src/linux-headers-6.8.0-111-generic/arch/x86/include/uapi
+-I/usr/src/linux-headers-6.8.0-111-generic/arch/x86/include/generated/uapi
+-isystem/usr/lib/gcc/x86_64-linux-gnu/12/include
+-include/usr/src/linux-headers-6.8.0-111-generic/include/linux/kconfig.h
+-D__KERNEL__
+-DMODULE
+-Wno-everything

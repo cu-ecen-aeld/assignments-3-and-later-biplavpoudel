@@ -12,6 +12,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/printk.h>
 #include <linux/types.h>
@@ -21,7 +22,7 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Biplav Poudel"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Biplav Poudel");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
