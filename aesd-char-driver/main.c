@@ -30,35 +30,31 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
-    PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+    PDEBUG("aesd_open() is invoked");
+    struct aesd_dev *device;                                        /* for device information */
+    device = container_of(inode->i_cdev, struct aesd_dev, cdev);    /* returns pointer to device state using its cdev field by matching with inode's cdev */
+    filp->private_data = device;                                    /* pass pointer to device state for future access*/
     return 0;
 }
 
 int aesd_release(struct inode *inode, struct file *filp)
 {
-    PDEBUG("release");
-    /**
-     * TODO: handle release
-     */
+    /* Since we have not alloted anything in aesd_open, no need to do anything!
+    filp->private_data can be safely ignored */
+    struct aesd_dev *dev = filp->private_data;
+    PDEBUG("ased_release() is invoked for device %p", dev);     /* %p is format specifier for pointer address of the aesd device*/
     return 0;
 }
 
-ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
-                loff_t *f_pos)
+ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+    PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
+    
     return retval;
 }
 
-ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
-                loff_t *f_pos)
+ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
