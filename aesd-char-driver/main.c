@@ -18,6 +18,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include "aesd-circular-buffer.h"
 #include "aesdchar.h"
 
 int aesd_major =   0; // use dynamic major
@@ -46,21 +47,80 @@ int aesd_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
+/**
+ * @brief Returns the data (can be partial) in the order they were written to the userspace (*buf).
+ *
+ * @param filp    is a struct file pointer
+ * @param buf     is a user-space pointer to buffer; can't be dereferenced by kernel for safety
+ * @param count   specifies the maximum number of bytes that can be returned
+ * @param f_pos   specifies the read position (location) of bytes to return
+ *
+ * @return size of data read
+ *
+ * @note The returned data needs to be recently written (from the latest 10 writes) based on position and size.
+ * @note The function needs to be re-entrant and interruptible 
+ */
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
+    PDEBUG("aesd_read() is invoked");
     ssize_t retval = 0;
     PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
-    
-    return retval;
+
+    struct aesd_dev *dev = filp->private_data;      /* this aesdchar device will be locked for read operation*/
+
+    /* we need to ensure no access to device struct is made without holding mutex*/
+    if (mutex_lock_interruptible(&dev->lock)) return -ERESTARTSYS;      /* if "locking wait" was interrupted, we need to signal kernel to restart*/
+
+    /* from f_pos, we only send count size of writes back */
+    struct aesd_buffer_entry *return_entry;
+    size_t entry_offset;        /* stores the offset from the beginning of the returned entry */
+    return_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->circ_buf, f_pos, &entry_offset);
+
+    if (return_entry == NULL){
+        PDEBUG("EOF is reached! aesd_read() returns %zu as there is no more data to read in %lld!", 0, *f_pos);
+        retval = 0;
+        goto out;
+    }
+
+    /* If the count is greater than the size of remaining entries, we just send the bytes for the remaining entries and update the *f_pos
+    i.e. if device data = "hello\nabc\nxyz\n
+         and count = 100, remaining = 4
+         We return: xyz\n
+
+    But, this assignment doesn't need me to read all the remaining bytes in a go.
+    As per the instruction, each read can optionally return a portion of the total data available.
+    i.e. only a single Assignment 8 write command! (full or partial depending upon the f_pos)
+
+    As long as return values is set correctly and offset (*offp) is updated correctly,
+    the application can retry the read to read all data until all available data is read. Happens automatically with fread (or cat)
+    */
+
+    size_t bytes_to_copy = min(return_entry->size - entry_offset, count);   // shouldn't exceed count size
+
+    /** 
+    * copy_to_user() returns number of bytes not copied.
+    * 0 means all bytes copied.
+    * non-zero means bytes remaining.
+    */
+    if (copy_to_user(buf, (void *) return_entry->buffptr + entry_offset, bytes_to_copy)){
+        PDEBUG("Partial read encountered during aesd_read() operation");
+        retval = -EFAULT;   // we return error if return value is non-zero, i.e. partial writes to userspace
+        goto out;
+    } 
+
+    *f_pos += bytes_to_copy;
+    retval = bytes_to_copy;
+
+    out:
+        mutex_unlock(&dev->lock);
+        return retval;
 }
 
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+
     return retval;
 }
 struct file_operations aesd_fops = {
