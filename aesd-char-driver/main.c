@@ -18,6 +18,7 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <string.h>
 #include "aesd-circular-buffer.h"
 #include "aesdchar.h"
 
@@ -62,17 +63,17 @@ int aesd_release(struct inode *inode, struct file *filp)
  */
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
-    PDEBUG("aesd_read() is invoked");
     ssize_t retval = 0;
     PDEBUG("read %zu bytes with offset %lld", count, *f_pos);
 
     struct aesd_dev *dev = filp->private_data;      /* this aesdchar device will be locked for read operation*/
 
     /* we need to ensure no access to device struct is made without holding mutex*/
-    if (mutex_lock_interruptible(&dev->lock)) return -ERESTARTSYS;      /* if "locking wait" was interrupted, we need to signal kernel to restart*/
+    if (mutex_lock_interruptible(&dev->lock)) 
+        return -ERESTARTSYS;                        /* if "locking wait" was interrupted, we need to signal kernel to restart*/
 
     /* from f_pos, we only send count size of writes back */
-    struct aesd_buffer_entry *return_entry;
+    struct aesd_buffer_entry *return_entry;     /* not same as the entry used in aesdchar device state*/
     size_t entry_offset;        /* stores the offset from the beginning of the returned entry */
     return_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->circ_buf, f_pos, &entry_offset);
 
@@ -121,7 +122,45 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
-    return retval;
+    struct aesd_dev *dev = filp->private_data;      /* this aesdchar device will be locked for write operation*/
+    struct aesd_buffer_entry *old_entry = &dev->entry;  /* stores previous partial writes in dev*/
+
+    /* we need to ensure no access to device struct is made without holding mutex*/
+    if (mutex_lock_interruptible(&dev->lock)) 
+        return -ERESTARTSYS;                        /* if "locking wait" was interrupted, we need to signal kernel to restart*/
+
+    if (old_entry->buffptr){
+        /* we allocate a new temporary entry and set it to zero before writing partial writes in its buffer_ptr!*/
+        struct aesd_buffer_entry *new_entry = kzalloc(sizeof(struct aesd_buffer_entry), GFP_KERNEL);
+        if (!new_entry){
+            PDEBUG("Couldn't allocate memory for new temp entry. No kfree() needed here!");
+            goto out;   //retval already set to -ENOMEM
+        }
+
+        /* now we allocate space for buffer ptr inside new_entry */
+        new_entry->buffptr = kmalloc(old_entry->size + count, GFP_KERNEL);
+        new_entry->size = 0;
+        if (!new_entry->buffptr){
+            PDEBUG("Error allocating memory for buffptr. Freeing the memory alloted for tmp entry!");
+            kfree(new_entry);
+            goto out;
+        }
+
+        size_t old_entry_size_copy = old_entry->size;
+
+        /* Now we copy the old entry with its partial writes to bigger and recently allocated entry*/
+        memcpy( (void *) new_entry->buffptr, old_entry->buffptr, old_entry->size);
+        new_entry->size = old_entry->size;
+        kfree(old_entry->buffptr);
+        old_entry->buffptr = NULL;
+        old_entry->size = 0;
+    }
+
+
+
+    out:
+        mutex_unlock(&dev->lock);
+        return retval;
 }
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
