@@ -153,9 +153,32 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         retval = -EFAULT;
         goto out;
     }
+    entry->size += count;
 
     /* Now we check the freshly written buffer for null termination and append it to the circular buffer*/
-    
+    bool newline_found = false;
+    size_t index;
+
+    for (index = 0; index < entry->size; index++){
+        if (*(entry->buffptr + index) == '\n'){
+            newline_found = true;
+            break;
+        }
+    }
+
+    if (newline_found){
+        char* temp_buffer = kzalloc(index, GFP_KERNEL);
+        if (!temp_buffer){
+            PDEBUG("Error allocating memory for buffptr. Freeing the memory alloted for tmp entry!");
+            kfree(temp_buffer);
+            goto out;
+        }
+        memcpy( (void *) temp_buffer, entry->buffptr, index);
+        aesd_circular_buffer_add_entry(&dev->circ_buf, temp_buffer);
+        memmove((void *) entry->buffptr, entry->buffptr + index, entry->size - index);
+        entry->size -= index;
+        kfree(temp_buffer);
+    }
 
     out:
         mutex_unlock(&dev->lock);
