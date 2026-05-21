@@ -102,6 +102,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
     * copy_to_user() returns number of bytes not copied.
     * 0 means all bytes copied.
     * non-zero means bytes remaining.
+    * NOTE: if all bytes copied, returns 0 else size of uncopied bytes! So the condition doesn't apply for success.
     */
     if (copy_to_user(buf, (void *) return_entry->buffptr + entry_offset, bytes_to_copy)){
         PDEBUG("Partial read encountered during aesd_read() operation");
@@ -123,40 +124,38 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
     struct aesd_dev *dev = filp->private_data;      /* this aesdchar device will be locked for write operation*/
-    struct aesd_buffer_entry *old_entry = &dev->entry;  /* stores previous partial writes in dev*/
+    struct aesd_buffer_entry *entry = &dev->entry;  /* stores previous partial writes in dev*/
 
     /* we need to ensure no access to device struct is made without holding mutex*/
     if (mutex_lock_interruptible(&dev->lock)) 
         return -ERESTARTSYS;                        /* if "locking wait" was interrupted, we need to signal kernel to restart*/
 
-    if (old_entry->buffptr){
-        /* we allocate a new temporary entry and set it to zero before writing partial writes in its buffer_ptr!*/
-        struct aesd_buffer_entry *new_entry = kzalloc(sizeof(struct aesd_buffer_entry), GFP_KERNEL);
-        if (!new_entry){
-            PDEBUG("Couldn't allocate memory for new temp entry. No kfree() needed here!");
-            goto out;   //retval already set to -ENOMEM
-        }
+    size_t old_entry_size_copy = entry->size;   // for backup as an offset to start write from
 
-        /* now we allocate space for buffer ptr inside new_entry */
-        new_entry->buffptr = kmalloc(old_entry->size + count, GFP_KERNEL);
-        new_entry->size = 0;
-        if (!new_entry->buffptr){
-            PDEBUG("Error allocating memory for buffptr. Freeing the memory alloted for tmp entry!");
-            kfree(new_entry);
-            goto out;
-        }
+    /* We create/allocate a new char buffer with original data preserved. */
+    PDEBUG("Reallocating the buffer inside entry with an increased size by count bytes.");
+    char *tmp = krealloc((const void *) entry->buffptr, entry->size + count, GFP_KERNEL);
+    if (!tmp){
+        PDEBUG("Failed to increase the size of buffer by count");
+        goto out;
+    }
+    entry->buffptr = tmp;
 
-        size_t old_entry_size_copy = old_entry->size;
+    /** Now we write to the buffer from userspace.
+        If partial copy is returned, it is not becuase the userspace buffer is exhausted.
+        It may be due to addressing error or page fault.
+        copy_from_user() will copy garbage values until count size, if needed.
+        NOTE: if all bytes copied, returns 0 else size of uncopied bytes! So the condition doesn't apply for success.
+    */
+    if (copy_from_user((void *) entry->buffptr + old_entry_size_copy, buf, count)){
 
-        /* Now we copy the old entry with its partial writes to bigger and recently allocated entry*/
-        memcpy( (void *) new_entry->buffptr, old_entry->buffptr, old_entry->size);
-        new_entry->size = old_entry->size;
-        kfree(old_entry->buffptr);
-        old_entry->buffptr = NULL;
-        old_entry->size = 0;
+        PDEBUG("Only partial copy from userspace occurred! Returning error.");
+        retval = -EFAULT;
+        goto out;
     }
 
-
+    /* Now we check the freshly written buffer for null termination and append it to the circular buffer*/
+    
 
     out:
         mutex_unlock(&dev->lock);
