@@ -148,12 +148,13 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         NOTE: if all bytes copied, returns 0 else size of uncopied bytes! So the condition doesn't apply for success.
     */
     if (copy_from_user((void *) entry->buffptr + old_entry_size_copy, buf, count)){
-
         PDEBUG("Only partial copy from userspace occurred! Returning error.");
+        entry->size = old_entry_size_copy;
         retval = -EFAULT;
         goto out;
     }
     entry->size += count;
+    retval = count;
 
     /* Now we check the freshly written buffer for null termination and append it to the circular buffer*/
     bool newline_found = false;
@@ -167,23 +168,31 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     }
 
     if (newline_found){
-        char* temp_buffer = kzalloc(index, GFP_KERNEL);
+        size_t writesize = index + 1;
+        /* (index+1) because index is not incremented and breaks off the for...loop when '\n' is found! */
+
+        char* temp_buffer = kzalloc(writesize, GFP_KERNEL);
         if (!temp_buffer){
-            PDEBUG("Error allocating memory for buffptr. Freeing the memory alloted for tmp entry!");
-            kfree(temp_buffer);
+            PDEBUG("Error allocating memory for temporary buffer!");
             goto out;
         }
-        memcpy( (void *) temp_buffer, entry->buffptr, index);
+
+        memcpy( (void *) temp_buffer, entry->buffptr, writesize);
         aesd_circular_buffer_add_entry(&dev->circ_buf, temp_buffer);
-        memmove((void *) entry->buffptr, entry->buffptr + index, entry->size - index);
-        entry->size -= index;
+
+        memmove((void *) entry->buffptr, entry->buffptr + writesize, entry->size - writesize);
+        entry->size -= writesize;
+
+        // he aesd_circular_buffer_add_entry() function simply copies the pointer, so we can free and reset it
         kfree(temp_buffer);
+        temp_buffer = NULL;
     }
 
     out:
         mutex_unlock(&dev->lock);
         return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,

@@ -29,11 +29,12 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
+    // Returns void if the pointers point to nowhere
+    if ((buffer == NULL) || (entry_offset_byte_rtn == NULL)) return NULL;
+
     uint8_t cur_entry = buffer->out_offs;   // current entry starts from out_offset!
     size_t remaining_char_offset = char_offset;
 
-    // Returns void if the pointers point to nowhere
-    if ((buffer == NULL) || (entry_offset_byte_rtn == NULL)) return NULL;
 
     // Returns NULL if buffer pointer is also empty
     if (!buffer->full && (buffer->out_offs == buffer->in_offs)) return NULL;
@@ -71,7 +72,7 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
         return &buffer->entry[cur_entry];
     }
     return NULL;
-    }
+}
 
 /**
 * Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs.
@@ -83,10 +84,18 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     // Return void if the pointers point to null items
-    if ((buffer == NULL) || (add_entry == NULL)) return; 
+    if ((buffer == NULL) || (add_entry == NULL)) return;
+
+    if (buffer->full) {
+    #ifdef __KERNEL__
+        kfree(buffer->entry[buffer->in_offs].buffptr);  // free the entry about to be overwritten to avoid memory leak
+    #else
+        free(buffer->entry[buffer->in_offs].buffptr);
+    #endif
+        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
 
     // adding one entry (add_entry) to in_offset position inside buffer's entry
-    // we don't care if buffer was empty or not during insertion
     buffer->entry[buffer->in_offs].buffptr = add_entry->buffptr;
     buffer->entry[buffer->in_offs].size = add_entry->size;
 
@@ -97,9 +106,6 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 
     // increase in_offset by 1 after each insertion
     buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-
-    // if buffer is full, we also shift the out_offset by 1; value becomes equal to in_offset after full
-    if (buffer->full) buffer->out_offs = buffer->in_offs;
     
     // by this point, insertion has happened at least once
     // so if buffer is not set to empty and the in_offs and out_offs are equal, the buffer is full
