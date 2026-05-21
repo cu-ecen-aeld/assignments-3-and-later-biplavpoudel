@@ -177,15 +177,19 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             goto out;
         }
 
+        // we copy the writes from index 0 until \n and assign it to temp_buffer pointer
         memcpy( (void *) temp_buffer, entry->buffptr, writesize);
         aesd_circular_buffer_add_entry(&dev->circ_buf, temp_buffer);
-
-        memmove((void *) entry->buffptr, entry->buffptr + writesize, entry->size - writesize);
+        
+        // after successful write, we check if entry size is 0 or not
         entry->size -= writesize;
 
-        // he aesd_circular_buffer_add_entry() function simply copies the pointer, so we can free and reset it
-        kfree(temp_buffer);
-        temp_buffer = NULL;
+        if (entry->size > 0) {
+            memmove((void *) entry->buffptr, entry->buffptr + writesize, entry->size);
+        } else {
+            kfree(entry->buffptr);              // if entry is empty, we free the pointer and reset the buffer
+            entry->buffptr = NULL;
+        }
     }
 
     out:
