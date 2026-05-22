@@ -84,7 +84,7 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    char *return_ptr = NULL;
+    const char *return_ptr = NULL;
 
     // Return void if the pointers point to null items
     if ((buffer == NULL) || (add_entry == NULL)) return return_ptr;
