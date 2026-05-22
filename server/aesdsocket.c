@@ -600,15 +600,14 @@ int main(int argc, char *argv[])
 	}
 
 	pthread_t ts_thread;
-	int ts_started = 0;
-
-	if (pthread_create(&ts_thread, NULL, timestamp_thread_fn, NULL) == 0)
-	{
-		ts_started = 1;
-	}
-	else
-	{
-		syslog(LOG_ERR, "Failed to start timestamp thread");
+	bool ts_started = false;
+	if (!USE_AESD_CHAR_DEVICE) {
+		if (pthread_create(&ts_thread, NULL, timestamp_thread_fn, NULL) == 0)
+		{
+			ts_started = true;
+		} else {
+			syslog(LOG_ERR, "Failed to start timestamp thread");
+		}
 	}
 
 	int client_fd; // client_fd for new accepted socket connection; different from default listening listen_fd
@@ -672,7 +671,7 @@ int main(int argc, char *argv[])
 	// Join workers
 	free_queue_and_join_all(&head);
 
-	// Join timestamp thread
+	// Join timestamp thread; not true for aesd char device
 	if (ts_started)
 	{
 		pthread_cancel(ts_thread);
