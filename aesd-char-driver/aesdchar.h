@@ -28,7 +28,7 @@
 struct aesd_dev
 {    
      struct aesd_circular_buffer circ_buf;     /* Circular buffer structure */
-     struct aesd_buffer_entry *entry;        /* For storing partial writes before \n */
+     struct aesd_buffer_entry *partial_entry;        /* For storing partial writes before \n */
      struct mutex lock;            /* locking primitive */
      struct cdev cdev;             /* Char device structure */
 };
