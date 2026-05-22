@@ -11,6 +11,7 @@
 #ifdef __KERNEL__
 #include <linux/types.h>
 #include <linux/slab.h>
+#include <linux/cdev.h>         // struct cdev
 #else
 #include <stddef.h> // size_t
 #include <stdint.h> // uintx_t
