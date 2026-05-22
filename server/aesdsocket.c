@@ -15,6 +15,7 @@
 * 	a. Redirects reads and writes to '/dev/aesdchar' instead of '/var/tmp/aesdsocketdata'
 *   b. Removes timestamp printing.
 *   c. Ensure you do not remove the '/dev/aesdchar' endpoint after exiting the aesdsocket application.
+* In addition, please ensure you are not opening the file descriptor for your driver endpoint from aesdsocket until it is accessed.
 */
 
 #include <stdio.h>
@@ -64,7 +65,6 @@ static pthread_mutex_t list_mutex = PTHREAD_MUTEX_INITIALIZER;
 // also we need to inform compiler that the variable can change outside of the normal flow of code
 // like through signal interrupts; so compiler never caches this into register and reloads it time-to-time
 static volatile sig_atomic_t exit_requested = 0;
-static atomic_bool exit_flag;
 
 // write pid to "/var/run/aesdsocket.pid"
 static int write_pidfile()
@@ -93,7 +93,6 @@ void handle_server_termination(int sig)
 {
 	(void)sig;
 	exit_requested = 1;
-	atomic_store(&exit_flag, true);
 }
 
 // struct for each worker thread after accepting incoming socket connection
@@ -341,8 +340,7 @@ void *readWriteSocket(void *arg)
 						ssize_t ns = send(client_fd, buf + sent, (size_t)nr - sent, 0);
 						if (ns == -1)
 						{
-							if (errno == EINTR)
-								continue;
+							if (errno == EINTR) continue;
 							close(fd);
 							pthread_mutex_unlock(&file_mutex);
 							syslog(LOG_ERR, "send failed: %s", strerror(errno));
@@ -352,6 +350,7 @@ void *readWriteSocket(void *arg)
 					}
 				}
 
+				int saved_errno = errno;		// close(fd) can modify errno if it fails.
 				close(fd);
 				pthread_mutex_unlock(&file_mutex);
 
@@ -376,9 +375,9 @@ void *readWriteSocket(void *arg)
 		syslog(LOG_ERR, "recv failed: %s", strerror(errno));
 	}
 
-out:
-	thread_cleanup(worker, &recv_buffer);
-	return NULL;
+	out:
+		thread_cleanup(worker, &recv_buffer);
+		return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -601,7 +600,7 @@ int main(int argc, char *argv[])
 
 	pthread_t ts_thread;
 	bool ts_started = false;
-	if (!USE_AESD_CHAR_DEVICE) {
+	#if !USE_AESD_CHAR_DEVICE
 		if (pthread_create(&ts_thread, NULL, timestamp_thread_fn, NULL) == 0)
 		{
 			ts_started = true;
@@ -609,12 +608,16 @@ int main(int argc, char *argv[])
 			syslog(LOG_ERR, "Failed to start timestamp thread");
 		}
 	}
+	#endif
 
 	int client_fd; // client_fd for new accepted socket connection; different from default listening listen_fd
 	struct sockaddr_storage incoming_addr;
 
 	while (!exit_requested)
-	{
+	{	
+		host[0] = '\0';   // clear from previous iteration
+    	service[0] = '\0';
+
 		socklen_t size_inaddr = sizeof(incoming_addr);
 		client_fd = accept(listen_fd, (struct sockaddr *)&incoming_addr, &size_inaddr);
 
@@ -645,8 +648,11 @@ int main(int argc, char *argv[])
 		}
 
 		worker_node->client_fd = client_fd;
-		strncpy(worker_node->host, host, NI_MAXHOST);
-		strncpy(worker_node->service, service, NI_MAXSERV);
+		strncpy(worker_node->host, host, NI_MAXHOST - 1 );
+		worker_node->host[NI_MAXHOST - 1] = '\0';								// or just use snprintf() to ensure null termination
+		strncpy(worker_node->service, service, NI_MAXSERV - 1);
+		worker_node->service[NI_MAXSERV - 1] = '\0';
+
 		atomic_init(&worker_node->completed, false);
 
 		if (pthread_create(&worker_node->thread_id, NULL, readWriteSocket, worker_node) != 0)
@@ -679,8 +685,13 @@ int main(int argc, char *argv[])
 	}
 
 	close(listen_fd);
-	unlink(packet_file);
-	unlink(PIDFILE);
+
+	/* we do not remove the  /dev/aesdchar endpoint after exiting the aesdsocket application */
+	#if !USE_AESD_CHAR_DEVICE
+		unlink(packet_file);
+	#endif
+
+	if (daemon_mode) unlink(PIDFILE);
 	closelog();
 
 	return 0;
