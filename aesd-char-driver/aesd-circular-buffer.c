@@ -76,22 +76,21 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 
 /**
 * Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs.
-* If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the
-* new start location.
-* Any necessary locking must be handled by the caller
+* If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the new start location.
+* Any necessary locking must be handled by the caller.
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
+* @return NULL or, if an existing entry at out_offs was replaced, 
+        the value of buffptr for the entry which was replaced (for use with dynamic memory allocation/free)
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
+    char *return_ptr = NULL;
+
     // Return void if the pointers point to null items
-    if ((buffer == NULL) || (add_entry == NULL)) return;
+    if ((buffer == NULL) || (add_entry == NULL)) return return_ptr;
 
     if (buffer->full) {
-    #ifdef __KERNEL__
-        kfree(buffer->entry[buffer->in_offs].buffptr);  // free the entry about to be overwritten to avoid memory leak
-    #else
-        free(buffer->entry[buffer->in_offs].buffptr);
-    #endif
+        return_ptr = buffer->entry[buffer->in_offs].buffptr;    // we return the buffptr which was replaced and free them in kernel function
         buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     }
 
@@ -99,7 +98,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     buffer->entry[buffer->in_offs].buffptr = add_entry->buffptr;
     buffer->entry[buffer->in_offs].size = add_entry->size;
 
-    //FOR TESTING
+    //FOR DEBUGGING
     // printf("The added entry is:%s", buffer->entry[buffer->in_offs].buffptr);
     // for (uint8_t i=0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) printf("%s", buffer->entry[i].buffptr);
     // printf("\n\n");
@@ -110,6 +109,8 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     // by this point, insertion has happened at least once
     // so if buffer is not set to empty and the in_offs and out_offs are equal, the buffer is full
     if (!buffer->full && buffer->in_offs == buffer->out_offs) buffer->full = true;
+
+    return return_ptr;
 }
 
 /**
