@@ -131,6 +131,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     bool newline_found = false;
     char *tmp;
     char *temp_buffer;
+    const char *ret_ptr = NULL;
 
     struct aesd_dev *dev = filp->private_data;      /* this aesdchar device will be locked for write operation*/
     struct aesd_buffer_entry *entry = dev->partial_entry;  /* stores previous partial writes in dev*/
@@ -191,7 +192,11 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 
         // we copy the writes from index 0 until \n and assign it to temp_buffer pointer
         memcpy( (void *) temp_buffer, entry->buffptr, writesize);
-        aesd_circular_buffer_add_entry(&dev->circ_buf, &new_entry);
+        ret_ptr = aesd_circular_buffer_add_entry(&dev->circ_buf, &new_entry);
+        if (ret_ptr != NULL) {
+            PDEBUG("Freeing overwritten buffer entry\n");
+            kfree(ret_ptr);
+        }
         
         // after successful write, we check if entry size is 0 or not
         entry->size -= writesize;
@@ -236,7 +241,7 @@ int aesd_init_module(void)
     dev_t dev = 0;
     int result;
     struct aesd_buffer_entry *entry;
-    
+
     // we use dynamic allocation to get major and minor numbers
     result = alloc_chrdev_region(&dev, aesd_minor, 1, "aesdchar");      // dev is a output-only param
     aesd_major = MAJOR(dev);
