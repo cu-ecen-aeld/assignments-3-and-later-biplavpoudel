@@ -1,15 +1,21 @@
-/*
- * socket-based program that opens stream socket bounded to port 9000
- * returns -1 on failure
- * listens/accepts connection
- * logs syslog as: 'Accepted conenction from xxxx'
- * receives data and appends to '/var/tmp/aesdsocketdata'; creates if it doesn't exist
- * returns full content of '/var/tmp/aesdsocketdata' to client
- * logs syslog as: 'Closed connection from xxxx'
- * restarts connection in a loop until SIGINT and SIGTERM
- * completes any open connections, closes open sockets and delete the /var/tmp/aesdsocketdata'
- * then, logs syslog as: 'Caught signal, exiting'
- */
+/**
+* socket-based program that opens stream socket bounded to port 9000
+* returns -1 on failure
+* listens/accepts connection
+* logs syslog as: 'Accepted conenction from xxxx'
+* receives data and appends to '/var/tmp/aesdsocketdata'; creates if it doesn't exist
+* returns full content of '/var/tmp/aesdsocketdata' to client
+* logs syslog as: 'Closed connection from xxxx'
+* restarts connection in a loop until SIGINT and SIGTERM
+* completes any open connections, closes open sockets and delete the /var/tmp/aesdsocketdata'
+* then, logs syslog as: 'Caught signal, exiting'
+ 
+* >>>UPDATED INSTRUCTION FOR ASSIGNMENT 8 >>>>
+* Modify your socket server application developed in assignments 5 and 6 to support and use a build switch USE_AESD_CHAR_DEVICE, set to 1 by default, which:
+* 	a. Redirects reads and writes to '/dev/aesdchar' instead of '/var/tmp/aesdsocketdata'
+*   b. Removes timestamp printing.
+*   c. Ensure you do not remove the '/dev/aesdchar' endpoint after exiting the aesdsocket application.
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +44,15 @@
 
 #define _POSIX_C_SOURCE 200809L
 
-static char *packet_file = "/var/tmp/aesdsocketdata";
+#define USE_AESD_CHAR_DEVICE 1			//build switch, set to 1 by default, to redirect reads and writes to '/dev/aesdchar'
+
+#if USE_AESD_CHAR_DEVICE	
+#	define RECVFILE "/dev/aesdchar" 
+#else
+#	define RECVFILE "/var/tmp/aesdsocketdata"
+#endif
+
+static char *packet_file = RECVFILE;
 
 // mutex for file operations
 static pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
