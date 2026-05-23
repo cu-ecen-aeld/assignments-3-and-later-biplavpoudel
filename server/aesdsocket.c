@@ -590,8 +590,7 @@ int main(int argc, char *argv[])
 		// now our process is a true daemon
 
 		// now we write pidfile for start-stop init script
-		if (write_pidfile() != 0)
-		{
+		if (write_pidfile() != 0){
 			syslog(LOG_ERR, "Failed to write to pidfile, exiting...");
 			exit(EXIT_FAILURE);
 		}
@@ -601,13 +600,10 @@ int main(int argc, char *argv[])
 	pthread_t ts_thread;
 	bool ts_started = false;
 	#if !USE_AESD_CHAR_DEVICE
-		if (pthread_create(&ts_thread, NULL, timestamp_thread_fn, NULL) == 0)
-		{
+		if (pthread_create(&ts_thread, NULL, timestamp_thread_fn, NULL) == 0){
 			ts_started = true;
 		} else {
-			syslog(LOG_ERR, "Failed to start timestamp thread");
-		}
-	}
+			syslog(LOG_ERR, "Failed to start timestamp thread");}
 	#endif
 
 	int client_fd; // client_fd for new accepted socket connection; different from default listening listen_fd
