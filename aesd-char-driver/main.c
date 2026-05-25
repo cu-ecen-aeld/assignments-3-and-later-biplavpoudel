@@ -24,6 +24,8 @@
 #include "aesd-circular-buffer.h"
 #include "aesdchar.h"
 
+#include "aesd_ioctl.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -214,12 +216,28 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         return retval;
 }
 
+/**
+ * Aesdchar driver implementation of fixed sized llseek method with locking and logging.
+ *
+ * For the lseek system call to work correctly, the read and write methods must cooperate
+ * by using and updating the offset item they receive as an argument.
+ * ○ read function: Must set *f_pos to *f_pos + retcount, where retcount is the number of bytes read
+ * ○ write function: Must set *f_pos to *f_pos + retcount, where retcount is the number of bytes written
+ */
+loff_t aesd_llseek(struct file *file, loff_t offset, int whence, loff_t size);
+
+static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset);
+
+int aesd_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek =   aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
 };
 
 static int aesd_setup_cdev(struct aesd_dev *dev)

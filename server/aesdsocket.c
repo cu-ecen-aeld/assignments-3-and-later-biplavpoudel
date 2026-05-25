@@ -38,6 +38,9 @@
 #include <time.h>
 #include "queue.h" //FreeBSD 10 based; thread-safe macros available
 
+#include <sys/ioctl.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
+
 #define PORT "9000"
 #define BACKLOG 10					  // no. of queued pending connections before refusal
 #define CHUNK_SIZE 4096				  // no. of bytes, we can read/write at once
