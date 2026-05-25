@@ -24,6 +24,7 @@
 #include "aesd-circular-buffer.h"
 #include "aesdchar.h"
 
+#include <asm/uaccess.h>
 #include "aesd_ioctl.h"
 
 int aesd_major =   0; // use dynamic major
@@ -293,7 +294,29 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 }
 
 long aesd_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
-    return 0;
+    int err = 0, tmp;
+    int retval = -ENOTTY;
+    /*
+    * we extract the type and number bitfields, and don't decode
+    * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok( )
+    */
+    if ((_IOC_TYPE(cmd) != AESD_IOC_MAGIC) || (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR))
+        goto out;
+
+    // now we just check our command with a case
+    switch(cmd){
+        case AESDCHAR_IOCSEEKTO:
+        {
+            struct aesd_seekto seekto;  // passed from userspace to kernel; describes the type of seek operation for aesd operations
+            if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)))  //on success, returns 0
+                retval = -EFAULT;
+            else
+                retval = aesd_adjust_file_offset(file, seekto.write_cmd, seekto.write_cmd_offset);
+            break;
+        }
+    }
+    out:
+        return retval;
 }
 
 struct file_operations aesd_fops = {
