@@ -88,17 +88,18 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
         goto out;
     }
 
-    /* If the count is greater than the size of remaining entries, we just send the bytes for the remaining entries and update the *f_pos
-    i.e. if device data = "hello\nabc\nxyz\n
-         and count = 100, remaining = 4
-         We return: xyz\n
-
-    But, this assignment doesn't need me to read all the remaining bytes in a go.
-    As per the instruction, each read can optionally return a portion of the total data available.
-    i.e. only a single Assignment 8 write command! (full or partial depending upon the f_pos)
-
-    As long as return values is set correctly and offset (*offp) is updated correctly,
-    the application can retry the read to read all data until all available data is read. Happens automatically with fread (or cat)
+    /** If the count is greater than the size of remaining entries,
+    * we just send the bytes for the remaining entries and update the *f_pos
+    * i.e. if device data = "hello\nabc\nxyz\n"
+    *      and count = 100, remaining = 4
+    *      We return: xyz\n
+    * 
+    * But, this assignment doesn't need me to read all the remaining bytes in a go.
+    * As per the instruction, each read can optionally return a portion of the total data available.
+    * i.e. only a single Assignment 8 write command! (full or partial depending upon the f_pos)
+    * 
+    * As long as return values is set correctly and offset (*offp) is updated correctly,
+    * the application can retry the read to read all data until all available data is read. Happens automatically with fread (or cat)
     */
 
     bytes_to_copy = min(return_entry->size - entry_offset, count);   // shouldn't exceed count size
@@ -216,19 +217,84 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         return retval;
 }
 
-/**
- * Aesdchar driver implementation of fixed sized llseek method with locking and logging.
- *
- * For the lseek system call to work correctly, the read and write methods must cooperate
+/** For the lseek system call to work correctly, the read and write methods must cooperate
  * by using and updating the offset item they receive as an argument.
  * ○ read function: Must set *f_pos to *f_pos + retcount, where retcount is the number of bytes read
  * ○ write function: Must set *f_pos to *f_pos + retcount, where retcount is the number of bytes written
  */
-loff_t aesd_llseek(struct file *file, loff_t offset, int whence, loff_t size);
+loff_t aesd_llseek(struct file *file, loff_t offset, int whence, loff_t size){
+    /** We need to support all positional types (SEEK_SET, SEEK_CUR, and SEEK_END).
+      * For this, assignment gives us the option to use fixed-sized llseek method with locking and logging.
+    */
+    struct aesd_dev *device = file->private_data;      /* this aesdchar device will be locked for write operation*/
+    loff_t retval = -EINVAL;
 
-static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset);
+    /* we need to ensure no access to device struct is made without holding mutex*/
+    if (mutex_lock_interruptible(&device->lock)){
+        PDEBUG("Error locking mutex for llseek operation...");
+        /* if "locking wait" was interrupted, we need to signal kernel to restart*/
+        retval = -ERESTARTSYS;
+        goto out; 
+    }                       
 
-int aesd_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+    switch (whence) {
+	case SEEK_SET: case SEEK_CUR: case SEEK_END:
+		retval = generic_file_llseek_size(file, offset, whence, size, size);
+	default:
+        mutex_unlock(&device->lock);
+    out:
+		return retval;
+	}
+}
+
+
+/**
+ * Adjust the file offset (f_pos) parameter of @param filp based on the location specified by
+ * @param write_cmd represents the command to seek into in circular buffer (the zero referenced num of commands),
+ * and @param write_cmd_offset represents the zero referenced offset within this command to seek into.(the zero referenced offset into command).
+ *
+ * As standard FILE APIs and llseek cannot perform this action, we use ioctl for this!
+ *
+ * @return 0 if successful, negative if error occurred:
+ *      -ERESTARTSYS if mutex could not be obtained,
+ *      -EINVAL if write_cmd or write_cmd_offset was out of range
+ *
+ * We check for  valid write_cmd and write_cmd_offset values, which would have been invalid if:
+ *      - haven't written the command yet!,
+ *      - out of range cmd (11), or
+ *      - write_cmd_offset is >= sizeof(command)
+ */
+static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset){
+    struct aesd_dev *device = filp->private_data;
+    long retval = 0;        // on success, we return 0
+    long buffer_offset;
+    unsigned int index;
+
+    if (mutex_lock_interruptible(&device->lock)){
+        PDEBUG("Error locking mutex before the adjustment of file offset parameter for writes...");
+        retval = -ERESTARTSYS;
+        goto out; 
+    }
+    // now we check if the param values are valid or not
+    if ((write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || 
+        (write_cmd_offset >= device->circ_buf.entry[write_cmd].size)){
+            PDEBUG("Invalid value for write_cmd:%u or write_cmd_offset:%u passed from userspace for a given entry in the circular buffer!", write_cmd, write_cmd_offset);
+            retval = -EINVAL;
+            goto out;
+        }
+    // if valid, we return the equivalent linear offset value
+    for (index = 0; index < write_cmd; index++){
+        buffer_offset += device->circ_buf.entry[index].size;
+    }
+    filp->f_pos = buffer_offset + write_cmd_offset;
+    out:
+        mutex_unlock(&device->lock);
+        return retval;
+}
+
+long aesd_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
+    return 0;
+}
 
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
