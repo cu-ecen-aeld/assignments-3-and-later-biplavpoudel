@@ -140,6 +140,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     struct aesd_dev *dev = filp->private_data;      /* this aesdchar device will be locked for write operation*/
     struct aesd_buffer_entry *entry = dev->partial_entry;  /* stores previous partial writes in dev*/
 
+    struct aesd_buffer_entry new_entry;
+
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
 
     /* we need to ensure no access to device struct is made without holding mutex*/
@@ -190,7 +192,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             PDEBUG("Error allocating memory for temporary buffer!");
             goto out;
         }
-        struct aesd_buffer_entry new_entry;
+        
         new_entry.buffptr = temp_buffer;
         new_entry.size = writesize;
 
@@ -237,8 +239,7 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
     if (mutex_lock_interruptible(&device->lock)){
         PDEBUG("Error locking mutex for llseek operation...");
         /* if "locking wait" was interrupted, we need to signal kernel to restart*/
-        retval = -ERESTARTSYS;
-        goto out; 
+        return -ERESTARTSYS; 
     }  
     
     // computing total size from circular buffer entries after locking
@@ -253,9 +254,9 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
 	default:
         break;
 	}
+
     mutex_unlock(&device->lock);
-    out:
-		return retval;
+	return retval;
 }
 
 
@@ -285,13 +286,12 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 
     if (mutex_lock_interruptible(&device->lock)){
         PDEBUG("Error locking mutex before the adjustment of file offset parameter for writes...");
-        retval = -ERESTARTSYS;
-        goto out; 
+        return -ERESTARTSYS;
     }
 
     valid_entries = device->circ_buf.full ?
         AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED :
-        (device->circ_buf.in_offs - device->circ_buf.out_offs) %
+        (device->circ_buf.in_offs - device->circ_buf.out_offs + AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) %
         AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
     // since the circular buffer's logical start is at out_offs, not at literal 0th entry!
@@ -299,7 +299,7 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
                     AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
     // now we check if the param values are valid or not
-    if ((write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || 
+    if ((write_cmd >= valid_entries) || 
         (write_cmd_offset >= device->circ_buf.entry[actual_index].size)){
             PDEBUG("Invalid value for write_cmd:%u or write_cmd_offset:%u \
                 passed from userspace for a given entry in the circular buffer!",
@@ -308,14 +308,14 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
             goto out;
         }
     // if valid, we return the equivalent linear offset value
-    for (index = 0; index < write_cmd; index++){
-        buffer_offset += device->circ_buf.entry[index].size;
+    for (index = 0; index < write_cmd; index++) {
+        uint8_t idx = (device->circ_buf.out_offs + index) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        buffer_offset += device->circ_buf.entry[idx].size;
     }
     filp->f_pos = buffer_offset + write_cmd_offset;
 
-    mutex_unlock(&device->lock);
-
     out:
+        mutex_unlock(&device->lock);
         return retval;
 }
 
