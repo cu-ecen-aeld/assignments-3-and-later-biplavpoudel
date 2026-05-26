@@ -223,12 +223,20 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
  * ○ read function: Must set *f_pos to *f_pos + retcount, where retcount is the number of bytes read
  * ○ write function: Must set *f_pos to *f_pos + retcount, where retcount is the number of bytes written
  */
-loff_t aesd_llseek(struct file *file, loff_t offset, int whence, loff_t size){
+loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
     /** We need to support all positional types (SEEK_SET, SEEK_CUR, and SEEK_END).
       * For this, assignment gives us the option to use fixed-sized llseek method with locking and logging.
     */
     struct aesd_dev *device = file->private_data;      /* this aesdchar device will be locked for write operation*/
     loff_t retval = -EINVAL;
+
+    loff_t size = 0;
+
+    // computing total size from circular buffer entries
+    int i;
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
+        size += device->circ_buf.entry[i].size;
+    }
 
     /* we need to ensure no access to device struct is made without holding mutex*/
     if (mutex_lock_interruptible(&device->lock)){
@@ -236,7 +244,7 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence, loff_t size){
         /* if "locking wait" was interrupted, we need to signal kernel to restart*/
         retval = -ERESTARTSYS;
         goto out; 
-    }                       
+    }                 
 
     switch (whence) {
 	case SEEK_SET: case SEEK_CUR: case SEEK_END:
