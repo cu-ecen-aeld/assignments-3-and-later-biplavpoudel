@@ -29,22 +29,27 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
+    uint8_t cur_entry;
+    size_t remaining_char_offset;
+    size_t read_entries = 0;
+    size_t total_valid_entries;
+
     // Returns void if the pointers point to nowhere
     if ((buffer == NULL) || (entry_offset_byte_rtn == NULL)) return NULL;
 
-    uint8_t cur_entry = buffer->out_offs;   // current entry starts from out_offset!
-    size_t remaining_char_offset = char_offset;
+    cur_entry = buffer->out_offs;   // current entry starts from out_offset!
+    remaining_char_offset = char_offset;
 
 
     // Returns NULL if buffer pointer is also empty
     if (!buffer->full && (buffer->out_offs == buffer->in_offs)) return NULL;
-    // printf("\n\nENTERING  CODE LOGIC>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
-    // printf("The given char_offset is: %ld\n", char_offset);
+
 
     // it is not guarenteed that the read/write buffer starts together from 0th position, so we find valid entries thorugh relative positions.
     // i.e. inoffs (writeops) = 2, outoffs (readops) = 3, MAX = 4. then valid entries starts from 3 (last)->0(first)->1(second), so only -1 mod 4 = 3.
-    size_t total_valid_entries = buffer->full ? AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED : (buffer->in_offs - buffer->out_offs) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-    size_t read_entries = 0;
+    total_valid_entries = buffer->full ? AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED :
+            ((buffer->in_offs - buffer->out_offs) + AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+            % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
     // we place the condition so the loop only goes over the valid entries starting from "out_offs" and not to infinity!
     while (read_entries < total_valid_entries && buffer->entry[cur_entry].buffptr != NULL)

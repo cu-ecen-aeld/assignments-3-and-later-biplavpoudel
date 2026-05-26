@@ -231,6 +231,7 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
     loff_t retval = -EINVAL;
 
     loff_t size = 0;
+    int i;
 
     /* we need to ensure no access to device struct is made without holding mutex*/
     if (mutex_lock_interruptible(&device->lock)){
@@ -241,7 +242,6 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
     }  
     
     // computing total size from circular buffer entries after locking
-    int i;
     for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
         size += device->circ_buf.entry[i].size;
     }
@@ -251,10 +251,11 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
 		retval = generic_file_llseek_size(file, offset, whence, size, size);
         break;
 	default:
-        mutex_unlock(&device->lock);
+        break;
+	}
+    mutex_unlock(&device->lock);
     out:
 		return retval;
-	}
 }
 
 
@@ -279,16 +280,30 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
     long retval = 0;        // on success, we return 0
     long buffer_offset = 0;
     unsigned int index;
+    uint8_t actual_index;
+    uint8_t valid_entries;
 
     if (mutex_lock_interruptible(&device->lock)){
         PDEBUG("Error locking mutex before the adjustment of file offset parameter for writes...");
         retval = -ERESTARTSYS;
         goto out; 
     }
+
+    valid_entries = device->circ_buf.full ?
+        AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED :
+        (device->circ_buf.in_offs - device->circ_buf.out_offs) %
+        AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    // since the circular buffer's logical start is at out_offs, not at literal 0th entry!
+    actual_index = (device->circ_buf.out_offs + write_cmd) %
+                    AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
     // now we check if the param values are valid or not
     if ((write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || 
-        (write_cmd_offset >= device->circ_buf.entry[write_cmd].size)){      //<-----unsure if I should take wrapping after overwriting into consideration
-            PDEBUG("Invalid value for write_cmd:%u or write_cmd_offset:%u passed from userspace for a given entry in the circular buffer!", write_cmd, write_cmd_offset);
+        (write_cmd_offset >= device->circ_buf.entry[actual_index].size)){
+            PDEBUG("Invalid value for write_cmd:%u or write_cmd_offset:%u \
+                passed from userspace for a given entry in the circular buffer!",
+                 write_cmd, write_cmd_offset);
             retval = -EINVAL;
             goto out;
         }
@@ -297,8 +312,10 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
         buffer_offset += device->circ_buf.entry[index].size;
     }
     filp->f_pos = buffer_offset + write_cmd_offset;
+
+    mutex_unlock(&device->lock);
+
     out:
-        mutex_unlock(&device->lock);
         return retval;
 }
 
