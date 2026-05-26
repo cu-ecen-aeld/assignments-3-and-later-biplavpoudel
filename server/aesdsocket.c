@@ -293,11 +293,16 @@ void *readWriteSocket(void *arg)
 	char temp[CHUNK_SIZE];
 	ssize_t bytes_read;
 
-	/* We assign file descriptor beforehand for both driver's and normal file's use case without closing and reopening.
-     * We open WITHOUT O_APPEND so that the file offset set by ioctl or llseek is honoured on subsequent reads.
+	/* We assign file descriptor beforehand for driver's and normal file's use case with conditional definition.
+     * For aesd char device, we open without O_APPEND or O_CREAT so that the file offset set by ioctl or llseek is honoured on subsequent reads.
 	 * The aesdchar driver handles its own internal write-append semantics; we must not fight it with O_APPEND from our side.
      */
-	int data_fd = open(packet_file, O_CREAT | O_RDWR, 0644);
+
+#if USE_AESD_CHAR_DEVICE
+    int data_fd = open(packet_file, O_RDWR, 0644);
+#else
+    int data_fd = open(packet_file, O_CREAT | O_RDWR | O_APPEND, 0644);
+#endif
 	if (data_fd == -1){
 		syslog(LOG_ERR, "open append failed: %s", strerror(errno));
 		goto out;
@@ -366,9 +371,16 @@ void *readWriteSocket(void *arg)
                         sent += (size_t)ns;
                     }
                 }
+
+				int saved_errno = errno;
+
                 pthread_mutex_unlock(&file_mutex);
-            }
-			else {
+
+				if (nr == -1 && saved_errno != EINTR) {
+    				syslog(LOG_ERR, "Read failed: %s", strerror(saved_errno));
+    				goto out;
+				}
+            } else {
 				/* For normal packet operation when no AESDCHAR_IOCSEEKTO is sent: we write to device, then read it all back*/
 				pthread_mutex_lock(&file_mutex);
 
@@ -386,19 +398,26 @@ void *readWriteSocket(void *arg)
 					}
 					total_written += (size_t)nw;
 				}
-				// not the ioctl command, so we close the file descriptor and reopen for read later
-				close(data_fd);
-				
-				// now we read the data written to the file
-				data_fd = open(packet_file, O_RDONLY);
-				if (data_fd == -1)
-				{
-					pthread_mutex_unlock(&file_mutex);
-					syslog(LOG_ERR, "open read failed: %s", strerror(errno));
-					goto out;
-				}
 
-				/* now read from the file and send it back to client*/
+				// // not the ioctl command, so we close the file descriptor and reopen for read later
+				// close(data_fd);	
+				// now we read the data written to the file
+				// data_fd = open(packet_file, O_RDONLY);
+				// if (data_fd == -1)
+				// {
+				// 	pthread_mutex_unlock(&file_mutex);
+				// 	syslog(LOG_ERR, "open read failed: %s", strerror(errno));
+				// 	goto out;
+				// }
+
+    			// seek to beginning for full readback
+    			if (lseek(data_fd, 0, SEEK_SET) == -1) {
+    			    pthread_mutex_unlock(&file_mutex);
+    			    syslog(LOG_ERR, "lseek failed: %s", strerror(errno));
+    			    goto out;
+    			}
+
+				/* now read from the file from start and send it back to client*/
                 char buf[CHUNK_SIZE];
                 ssize_t nr;
                 while ((nr = read(data_fd, buf, CHUNK_SIZE)) > 0) {
@@ -414,7 +433,14 @@ void *readWriteSocket(void *arg)
                         sent += (size_t)ns;
                     }
                 }
+
+				int saved_errno = errno;
 				pthread_mutex_unlock(&file_mutex);
+
+				if (nr == -1 && saved_errno != EINTR) {
+    				syslog(LOG_ERR, "Read failed: %s", strerror(saved_errno));
+    				goto out;
+				}
             }
 #else	/* !USE_AESD_CHAR_DEVICE, the code remains unchanged */
 
@@ -463,7 +489,22 @@ void *readWriteSocket(void *arg)
             }
 			
 			int saved_errno = errno;
+			close(data_fd);
+
+			//we now reopen fd for next packet's write
+			data_fd = open(packet_file, O_CREAT | O_RDWR | O_APPEND, 0644);
+
 			pthread_mutex_unlock(&file_mutex);
+
+			if (nr == -1 && saved_errno != EINTR) {
+    			syslog(LOG_ERR, "read failed: %s", strerror(saved_errno));
+    			goto out;
+			}
+
+			if (data_fd == -1) {
+    			syslog(LOG_ERR, "reopen for append failed: %s", strerror(errno));
+    			goto out;
+			}
 
 #endif		/* USE_AESD_CHAR_DEVICE */
 
