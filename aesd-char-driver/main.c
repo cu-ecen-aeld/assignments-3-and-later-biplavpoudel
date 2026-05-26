@@ -232,26 +232,29 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
 
     loff_t size = 0;
 
-    // computing total size from circular buffer entries
-    int i;
-    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
-        size += device->circ_buf.entry[i].size;
-    }
-
     /* we need to ensure no access to device struct is made without holding mutex*/
     if (mutex_lock_interruptible(&device->lock)){
         PDEBUG("Error locking mutex for llseek operation...");
         /* if "locking wait" was interrupted, we need to signal kernel to restart*/
         retval = -ERESTARTSYS;
         goto out; 
-    }                 
+    }  
+    
+    // computing total size from circular buffer entries after locking
+    int i;
+    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
+        size += device->circ_buf.entry[i].size;
+    }
 
     switch (whence) {
 	case SEEK_SET: case SEEK_CUR: case SEEK_END:
 		retval = generic_file_llseek_size(file, offset, whence, size, size);
+        break;
 	default:
-        mutex_unlock(&device->lock);
+        retval = -EINVAL;
+        break;
     out:
+        mutex_unlock(&device->lock);
 		return retval;
 	}
 }
@@ -276,7 +279,7 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
 static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset){
     struct aesd_dev *device = filp->private_data;
     long retval = 0;        // on success, we return 0
-    long buffer_offset;
+    long buffer_offset = 0;
     unsigned int index;
 
     if (mutex_lock_interruptible(&device->lock)){
@@ -286,7 +289,7 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
     }
     // now we check if the param values are valid or not
     if ((write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) || 
-        (write_cmd_offset >= device->circ_buf.entry[write_cmd].size)){
+        (write_cmd_offset >= device->circ_buf.entry[write_cmd].size)){      //<-----unsure if I should take wrapping after overwriting into consideration
             PDEBUG("Invalid value for write_cmd:%u or write_cmd_offset:%u passed from userspace for a given entry in the circular buffer!", write_cmd, write_cmd_offset);
             retval = -EINVAL;
             goto out;
