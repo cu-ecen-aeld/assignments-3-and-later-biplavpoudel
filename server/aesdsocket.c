@@ -20,6 +20,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/syslog.h>
 #include <unistd.h>
 #include <errno.h>
 #include <err.h>
@@ -277,22 +279,44 @@ void *readWriteSocket(void *arg)
 	char temp[CHUNK_SIZE];
 	ssize_t bytes_read;
 
+	int data_fd = open(packet_file, O_CREAT | O_RDWR | O_APPEND, 0644);
+	if (data_fd == -1){
+		syslog(LOG_ERR, "open append failed: %s", strerror(errno));
+		goto out;
+	}
+
 	while ((bytes_read = recv(client_fd, temp, CHUNK_SIZE, 0)) > 0)
 	{	
-	/** We need to check if the data in buffer (temp), sent over the socket, contains string equals AESDCHAR_IOCSEEKTO:X,Y
-	  * where X and Y are unsigned decimal integer values,
-	  * the X should be considered the write command to seek into,
-	  * and the Y should be considered the offset within the write command. 
+	/** FOR ASSIGNMENT 9 >>>>
+	  * We need to check if the data in buffer (temp), sent over the socket, contains string in the format AESDCHAR_IOCSEEKTO:X,Y
+	  * 	where X and Y are unsigned decimal integer values,
+	  * 	the X should be considered the write command to seek into,
+	  * 	and the Y should be considered the offset within the write command. 
 	  *
 	  * These values should be sent to the aesdchar driver using the AESDCHAR_IOCSEEKTO ioctl. 
 	  * The ioctl command should be performed before any additional writes to our aesdchar device.
 	  *
 	  * We don't write this string command into the aesdchar device as we do with other strings sent to the socket.
 	  * We send the content of the aesdchar device back over the socket, as we do with any other string received over the socket interface.
-	  * We need to ensure the read of the file and return over the socket uses
-	  * the same (not closed and re-opened) file descriptor used to send the ioctl, to ensure our file offset is honored for the read command.
+	  * We need to ensure the read of the file and return over the socket uses the same (not closed and re-opened) file descriptor \
+	  * 	used to send the ioctl, to ensure our file offset is honored for the read command.
 	*/
-		
+	#ifdef USE_AESD_CHAR_DEVICE
+		// strcmp compares until null termination, but in my current implementation string may not terminate at \0
+		if (strncmp(temp, "AESDCHAR_IOCSEEKTO:", strlen("AESDCHAR_IOCSEEKTO:")) == 0){
+			struct aesd_seekto seek_to;
+			// now to scan from the string for X (write_cmd) and Y(write_cmd_offset)
+			sscanf(temp, "AESDCHAR_IOCSEEKTO:%u,%u", &seek_to.write_cmd, &seek_to.write_cmd_offset);
+
+			if (ioctl(data_fd, AESDCHAR_IOCSEEKTO, &seek_to) < 0){	//*arg is equal to &seek_to
+				syslog(LOG_ERR, "Failed to invoke ioctl to change the offset value!");
+				goto out;
+			}
+		}
+		// after sending ioctl syscall to aesdchar driver, we continue the while loop for next input from socket.
+
+	#else
+		// for non-aesdchar device purpose, we don't need ioctl. So the rest is as before
 		char *new_buffer = realloc(recv_buffer, buffer_size + (size_t)bytes_read);
 		if (!new_buffer)
 		{
@@ -312,18 +336,18 @@ void *readWriteSocket(void *arg)
 				/* Critical section: file append + file readback must be atomic */
 				pthread_mutex_lock(&file_mutex);
 
-				int fd = open(packet_file, O_CREAT | O_RDWR | O_APPEND, 0644);
-				if (fd == -1)
-				{
-					pthread_mutex_unlock(&file_mutex);
-					syslog(LOG_ERR, "open append failed: %s", strerror(errno));
-					goto out;
-				}
+				// int fd = open(packet_file, O_CREAT | O_RDWR | O_APPEND, 0644);
+				// if (fd == -1)
+				// {
+				// 	pthread_mutex_unlock(&file_mutex);
+				// 	syslog(LOG_ERR, "open append failed: %s", strerror(errno));
+				// 	goto out;
+				// }
 
 				size_t total_written = 0;
 				while (total_written < packet_len)
 				{
-					ssize_t nw = write(fd, recv_buffer + total_written, packet_len - total_written);
+					ssize_t nw = write(data_fd, recv_buffer + total_written, packet_len - total_written);
 					if (nw == -1)
 					{
 						if (errno == EINTR)
@@ -336,7 +360,7 @@ void *readWriteSocket(void *arg)
 					total_written += (size_t)nw;
 				}
 
-				close(fd);
+				close(data_fd);
 
 				fd = open(packet_file, O_RDONLY);
 				if (fd == -1)
@@ -384,6 +408,8 @@ void *readWriteSocket(void *arg)
 				i = (size_t)-1; /* restart scan */
 			}
 		}
+		// now we continue the while loop for next input into client_fd
+		#endif
 	}
 
 	if (bytes_read == -1 && errno != EINTR)
