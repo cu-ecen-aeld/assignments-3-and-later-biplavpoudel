@@ -38,7 +38,6 @@
 #include <time.h>
 #include "queue.h" //FreeBSD 10 based; thread-safe macros available
 
-#include <sys/ioctl.h>
 #include "../aesd-char-driver/aesd_ioctl.h"
 
 #define PORT "9000"
@@ -279,7 +278,21 @@ void *readWriteSocket(void *arg)
 	ssize_t bytes_read;
 
 	while ((bytes_read = recv(client_fd, temp, CHUNK_SIZE, 0)) > 0)
-	{
+	{	
+	/** We need to check if the data in buffer (temp), sent over the socket, contains string equals AESDCHAR_IOCSEEKTO:X,Y
+	  * where X and Y are unsigned decimal integer values,
+	  * the X should be considered the write command to seek into,
+	  * and the Y should be considered the offset within the write command. 
+	  *
+	  * These values should be sent to the aesdchar driver using the AESDCHAR_IOCSEEKTO ioctl. 
+	  * The ioctl command should be performed before any additional writes to our aesdchar device.
+	  *
+	  * We don't write this string command into the aesdchar device as we do with other strings sent to the socket.
+	  * We send the content of the aesdchar device back over the socket, as we do with any other string received over the socket interface.
+	  * We need to ensure the read of the file and return over the socket uses
+	  * the same (not closed and re-opened) file descriptor used to send the ioctl, to ensure our file offset is honored for the read command.
+	*/
+		
 		char *new_buffer = realloc(recv_buffer, buffer_size + (size_t)bytes_read);
 		if (!new_buffer)
 		{
