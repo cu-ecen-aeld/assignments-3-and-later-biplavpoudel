@@ -251,10 +251,8 @@ loff_t aesd_llseek(struct file *file, loff_t offset, int whence){
 		retval = generic_file_llseek_size(file, offset, whence, size, size);
         break;
 	default:
-        retval = -EINVAL;
-        break;
-    out:
         mutex_unlock(&device->lock);
+    out:
 		return retval;
 	}
 }
@@ -305,7 +303,6 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 }
 
 long aesd_ioctl(struct file *file, unsigned int cmd, unsigned long arg){
-    int err = 0, tmp;
     int retval = -ENOTTY;
     /*
     * we extract the type and number bitfields, and don't decode
