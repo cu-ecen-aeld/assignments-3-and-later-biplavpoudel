@@ -332,17 +332,15 @@ void *readWriteSocket(void *arg)
 			 we check the preceding string for the ioctl command*/
 
 #if USE_AESD_CHAR_DEVICE
-			
+			// we first compare the first 19 bytes prefixes of the string in buffer with "AESDCHAR_IOCSEEKTO:"
 			if (strncmp(recv_buffer, "AESDCHAR_IOCSEEKTO:", strlen("AESDCHAR_IOCSEEKTO:")) == 0){
                 struct aesd_seekto seek_to;
-                /*
-                 * sscanf on recv_buffer is safe: the '\n' (or '\0') at
-                 * position i stops the integer scan naturally.
-                 */
+
                 if (sscanf(recv_buffer, "AESDCHAR_IOCSEEKTO:%u,%u", &seek_to.write_cmd, &seek_to.write_cmd_offset) != 2){
                     syslog(LOG_ERR, "AESDCHAR_IOCSEEKTO badly formatted");
                     goto out;
-                }
+				}
+				fprintf(stdout,"\nIOCTL CMD ENCOUNTERED: AESDCHAR_IOCSEEKTO:%u,%u\n", seek_to.write_cmd, seek_to.write_cmd_offset);
 
                 // As per instrcution, we send the ioctl on the SAME fd that we will read from, \
 				//  so the driver's offset is preserved for the read below.
@@ -355,13 +353,16 @@ void *readWriteSocket(void *arg)
                     pthread_mutex_unlock(&file_mutex);
                     goto out;
                 }
-                /* now read from the ioctl-set offset and send to client*/
+				fprintf(stdout,"\nIOCTL CMD SEND AS SYSTEMCALL\n");
+                /* now read from the specified ioctl-set offset and send to client*/
                 char buf[CHUNK_SIZE];
                 ssize_t nr;
+				fprintf(stdout, "\nThe sent values are:\n");
                 while ((nr = read(data_fd, buf, CHUNK_SIZE)) > 0) {
                     size_t sent = 0;
                     while (sent < (size_t)nr) {
                         ssize_t ns = send(client_fd, buf + sent, (size_t)nr - sent, 0);
+						fprintf(stdout, "%s\n", buf+sent);
                         if (ns == -1) {
                             if (errno == EINTR) continue;
                             syslog(LOG_ERR, "send failed: %s", strerror(errno));
@@ -420,10 +421,12 @@ void *readWriteSocket(void *arg)
 				/* now read from the file from start and send it back to client*/
                 char buf[CHUNK_SIZE];
                 ssize_t nr;
+				fprintf(stdout, "\nThe sent values are:\n");
                 while ((nr = read(data_fd, buf, CHUNK_SIZE)) > 0) {
                     size_t sent = 0;
                     while (sent < (size_t)nr) {
                         ssize_t ns = send(client_fd, buf + sent, (size_t)nr - sent, 0);
+						fprintf(stdout, "%s\n", buf+sent);
                         if (ns == -1) {
                             if (errno == EINTR) continue;
                             syslog(LOG_ERR, "send failed: %s", strerror(errno));
@@ -518,7 +521,6 @@ void *readWriteSocket(void *arg)
 			// -1 in unsigned long is equivalent to SIZE_MAX
 		}
 	}
-
 	if (bytes_read == -1 && errno != EINTR)
 	{
 		syslog(LOG_ERR, "recv failed: %s", strerror(errno));
