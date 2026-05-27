@@ -340,7 +340,8 @@ void *readWriteSocket(void *arg)
                     syslog(LOG_ERR, "AESDCHAR_IOCSEEKTO badly formatted");
                     goto out;
 				}
-				fprintf(stdout,"\nIOCTL CMD ENCOUNTERED: AESDCHAR_IOCSEEKTO:%u,%u\n", seek_to.write_cmd, seek_to.write_cmd_offset);
+				syslog(LOG_INFO, "IOCTL CMD: AESDCHAR_IOCSEEKTO:%u,%u",
+                       seek_to.write_cmd, seek_to.write_cmd_offset);
 
                 // As per instrcution, we send the ioctl on the SAME fd that we will read from, \
 				//  so the driver's offset is preserved for the read below.
@@ -353,12 +354,14 @@ void *readWriteSocket(void *arg)
                     pthread_mutex_unlock(&file_mutex);
                     goto out;
                 }
-				fprintf(stdout,"\nIOCTL CMD SEND AS SYSTEMCALL\n");
+				syslog(LOG_INFO, "ioctl succeeded, reading back from driver...");
+
                 /* now read from the specified ioctl-set offset and send to client*/
                 char buf[CHUNK_SIZE];
                 ssize_t nr;
 				fprintf(stdout, "\nThe sent values are:\n");
                 while ((nr = read(data_fd, buf, CHUNK_SIZE)) > 0) {
+					syslog(LOG_INFO, "read %zd bytes from driver: %.*s", nr, (int)nr, buf);
                     size_t sent = 0;
                     while (sent < (size_t)nr) {
                         ssize_t ns = send(client_fd, buf + sent, (size_t)nr - sent, 0);
@@ -383,6 +386,8 @@ void *readWriteSocket(void *arg)
 				}
             } else {
 				/* For normal packet operation when no AESDCHAR_IOCSEEKTO is sent: we write to device, then read it all back*/
+				syslog(LOG_INFO, "Normal write: '%.*s'", (int)packet_len, recv_buffer);
+
 				pthread_mutex_lock(&file_mutex);
 
 				size_t total_written = 0;
@@ -411,7 +416,8 @@ void *readWriteSocket(void *arg)
 				// 	goto out;
 				// }
 
-    			// seek to beginning for full readback
+				syslog(LOG_INFO, "Write done, seeking to 0 for readback");
+
     			if (lseek(data_fd, 0, SEEK_SET) == -1) {
     			    pthread_mutex_unlock(&file_mutex);
     			    syslog(LOG_ERR, "lseek failed: %s", strerror(errno));
@@ -423,10 +429,10 @@ void *readWriteSocket(void *arg)
                 ssize_t nr;
 				fprintf(stdout, "\nThe sent values are:\n");
                 while ((nr = read(data_fd, buf, CHUNK_SIZE)) > 0) {
+					syslog(LOG_INFO, "readback %zd bytes: %.*s", nr, (int)nr, buf);
                     size_t sent = 0;
                     while (sent < (size_t)nr) {
                         ssize_t ns = send(client_fd, buf + sent, (size_t)nr - sent, 0);
-						fprintf(stdout, "%s\n", buf+sent);
                         if (ns == -1) {
                             if (errno == EINTR) continue;
                             syslog(LOG_ERR, "send failed: %s", strerror(errno));
